@@ -18,7 +18,10 @@ import org.apache.sanselan.formats.tiff.TiffImageMetadata.GPSInfo;
 import org.apache.sanselan.formats.tiff.constants.ExifTagConstants;
 import org.apache.sanselan.formats.tiff.constants.GPSTagConstants;
 
+import android.media.ExifInterface;
 import android.text.TextUtils;
+
+import static android.media.ExifInterface.*;
 
 public class EXIFUtils {
 
@@ -49,28 +52,36 @@ public class EXIFUtils {
                 return exif;
             }
 
-            List fields = sourceExif.getAllFields();
+            try {
+                List fields = sourceExif.getAllFields();
+                for ( int i = 0; i < fields.size(); ++i ) {
+                    TiffField field = (TiffField) fields.get(i);
 
-            for ( int i = 0; i < fields.size(); ++i ) {
-                TiffField field = (TiffField) fields.get(i);
+                    String tagName = field.getTagName();
 
-                String tagName = field.getTagName();
+                    Object value = convertExifField(field);
 
-                Object value = convertExifField(field.getValue());
-
-                if ( value != null ) {
-                    exif.put(tagName, value);
+                    if ( value != null ) {
+                        exif.put(tagName, value);
+                    }
                 }
+            }
+            catch ( ImageReadException e ) {
+                FulcrumLogger.log(e);
             }
 
             TiffDirectory gpsDirectory = sourceExif.findDirectory(-3);
-
             if ( gpsDirectory != null ) {
-                GPSInfo gps = sourceExif.getGPS();
+                try {
+                    GPSInfo gps = sourceExif.getGPS();
 
-                if ( gps != null ) {
-                    exif.put("GPS Latitude Value", gps.getLatitudeAsDegreesNorth());
-                    exif.put("GPS Longitude Value", gps.getLongitudeAsDegreesEast());
+                    if ( gps != null ) {
+                        exif.put("GPS Latitude Value", gps.getLatitudeAsDegreesNorth());
+                        exif.put("GPS Longitude Value", gps.getLongitudeAsDegreesEast());
+                    }
+                }
+                catch ( ImageReadException e ) {
+                    FulcrumLogger.log(e);
                 }
 
                 for ( int i = 0; i < gpsDirectory.entries.size(); ++i ) {
@@ -79,7 +90,7 @@ public class EXIFUtils {
                     if ( field.tag < GPSTagConstants.ALL_GPS_TAGS.length ) {
                         String tagName = GPSTagConstants.ALL_GPS_TAGS[field.tag].name;
 
-                        Object value = convertExifField(field.getValue());
+                        Object value = convertExifField(field);
 
                         if ( value != null ) {
                             exif.put(tagName, value);
@@ -88,7 +99,7 @@ public class EXIFUtils {
                     else {
                         if ( field.tag == 31 ) {
                             // this is the GPS accuracy field
-                            Object value = convertExifField(field.getValue());
+                            Object value = convertExifField(field);
 
                             if ( value != null ) {
                                 exif.put("GPS H Positioning Error", value);
@@ -99,7 +110,7 @@ public class EXIFUtils {
             }
         }
         catch ( IOException | ImageReadException e ) {
-            FCMLog.log(e);
+            FulcrumLogger.log(e);
         }
 
         return exif;
@@ -134,13 +145,14 @@ public class EXIFUtils {
                 exif.put("direction", raw.get(GPSTagConstants.GPS_TAG_GPS_IMG_DIRECTION.name));
             }
             if ( raw.containsKey(ExifTagConstants.EXIF_TAG_DATE_TIME_ORIGINAL.name) ) {
-                // Reformat the timestampp to be sane, YYYY-MM-DD HH:MM:SS
+                // Reformat the timestampp to be sane, YYYY/MM/DD HH:MM:SS, which is the most
+                // universally supported format for Date parsing. It parses in V8.
                 String stamp = (String) raw.get(ExifTagConstants.EXIF_TAG_DATE_TIME_ORIGINAL.name);
 
                 String[] parts = TextUtils.split(stamp, " ");
 
                 if ( parts.length > 1 ) {
-                    exif.put("timestamp", parts[0].replace(":", "-") + " " + parts[1]);
+                    exif.put("timestamp", parts[0].replace(":", "/") + " " + parts[1]);
                 }
             }
             if ( raw.containsKey(ExifTagConstants.EXIF_TAG_ORIENTATION.name) ) {
@@ -157,11 +169,30 @@ public class EXIFUtils {
         return exif;
     }
 
+    public static int getOrientation(String filePath) {
+        try {
+            ExifInterface exifInterface = new ExifInterface(filePath);
+            return exifInterface.getAttributeInt(TAG_ORIENTATION, ORIENTATION_NORMAL);
+        }
+        catch ( IOException e ) {
+            return ORIENTATION_NORMAL;
+        }
+    }
+
     // ------------------------------------------------------------------------
     // Private Class Methods
     // ------------------------------------------------------------------------
 
-    private static Object convertExifField(Object value) {
+    private static Object convertExifField(TiffField field) {
+        Object value;
+        try {
+            value = field.getValue();
+        }
+        catch ( ImageReadException e ) {
+            FulcrumLogger.log(e);
+            return null;
+        }
+
         if ( value instanceof String ) {
             return value;
         }

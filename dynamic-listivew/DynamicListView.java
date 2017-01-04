@@ -25,6 +25,7 @@ import android.animation.ObjectAnimator;
 import android.animation.TypeEvaluator;
 import android.animation.ValueAnimator;
 import android.content.Context;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -117,6 +118,10 @@ public class DynamicListView extends ListView {
 
     private int mScrollState = OnScrollListener.SCROLL_STATE_IDLE;
 
+    private boolean mHasExtraBottomPadding;
+
+    private int mExtraBottomPadding;
+
     public DynamicListView(Context context) {
         super(context);
         init(context);
@@ -136,13 +141,16 @@ public class DynamicListView extends ListView {
      * Josh commented setOnItemLongClickListener(mOnItemLongClickListener); below so that drag and drop
      * could be enabled/disabled. also reordering isnt based on longItemClick anymore
      */
-    public void init(Context context) {
+    public void init(final Context context) {
         // setOnItemLongClickListener(mOnItemLongClickListener);
         super.setOnScrollListener(mAllOnScrollListener);
-
         setOnScrollListener(mScrollListener);
-        DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+
+        Resources resources = context.getResources();
+        DisplayMetrics metrics = resources.getDisplayMetrics();
         mSmoothScrollAmountAtEdge = (int) (SMOOTH_SCROLL_AMOUNT_AT_EDGE / metrics.density);
+
+        mExtraBottomPadding = resources.getDimensionPixelSize(R.dimen.layers_extra_bottom_padding);
     }
 
     /**
@@ -267,6 +275,36 @@ public class DynamicListView extends ListView {
         }
     }
 
+    /*
+     * Josh added the below method to address when there's not enough items for the list to scroll
+     * and the FAB covers up the right of the row (the checkbox for layers)
+     */
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        boolean canScrollUp = canScrollVertically(-1);
+        boolean canScrollDown = canScrollVertically(1);
+
+        /*
+         * if list can scroll down, dont need padding
+         *
+         * if list cant scroll down, can scroll up, and doesnt have extra padding, then no padding
+         * - this is the case where the user presses edit or done while at the bottom of the list
+         *   without the second check, padding gets added because canScrollDown is false
+         */
+        if ( canScrollDown || (canScrollUp && !mHasExtraBottomPadding) ) {
+            setPadding(0, 0, 0, 0);
+            setClipToPadding(true);
+            mHasExtraBottomPadding = false;
+        }
+        else {
+            setPadding(0, 0, 0, mExtraBottomPadding);
+            setClipToPadding(false);
+            mHasExtraBottomPadding = true;
+        }
+
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    }
+
     /**
      * dispatchDraw gets invoked when all the child views are about to be drawn.
      * By overriding this method, the hover cell (BitmapDrawable) can be drawn
@@ -282,7 +320,6 @@ public class DynamicListView extends ListView {
 
     @Override
     public boolean onTouchEvent(@NonNull MotionEvent event) {
-
         switch ( event.getAction() & MotionEvent.ACTION_MASK ) {
             case MotionEvent.ACTION_DOWN:
                 mDownX = (int) event.getX();
